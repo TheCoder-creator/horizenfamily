@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HorizenFamily</title>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --card: rgba(20, 20, 20, 0.95);
+            --accent: #00eb84;
+            --text: #ffffff;
+            --border: #333;
+            --danger: #ff4d6a;
+            --warning: #ff9500;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+        }
+        h1 {
+            color: var(--accent);
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        p.sub { color: #888; margin-bottom: 30px; text-align: center; max-width: 500px; }
+        .panel {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 24px;
+            width: 100%;
+            max-width: 600px;
+            margin-bottom: 20px;
+        }
+        .panel h2 {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #ddd;
+        }
+        .form-group { margin-bottom: 20px; }
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+            transition: 0.2s;
+            font-family: inherit;
+        }
+        input:focus, select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(0, 235, 132, 0.15);
+        }
+        .btn {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+            transition: 0.15s;
+        }
+        .btn:hover { filter: brightness(1.15); transform: scale(1.02); }
+        .btn-danger { background: var(--danger); color: white; margin-top: 10px; }
+        .btn-sm { width: auto; padding: 8px 16px; font-size: 12px; }
+        
+        .member-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.04);
+            padding: 16px;
+            border-radius: 14px;
+            margin-bottom: 10px;
+            border: 1px solid var(--border);
+        }
+        .member-info h3 { font-size: 15px; margin-bottom: 4px; }
+        .member-info span { font-size: 12px; color: #888; }
+        .role-badge {
+            font-size: 10px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+        .role-parent { background: rgba(0, 235, 132, 0.15); color: var(--accent); }
+        .role-child { background: rgba(74, 158, 255, 0.15); color: #4a9eff; }
+        
+        .toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .toggle-row:last-child { border-bottom: none; }
+        .toggle-label h4 { font-size: 14px; margin-bottom: 4px; }
+        .toggle-label p { font-size: 12px; color: #666; }
+        .toggle {
+            width: 50px;
+            height: 28px;
+            background: #333;
+            border-radius: 14px;
+            position: relative;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .toggle.active { background: var(--accent); }
+        .toggle::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            top: 3px;
+            left: 3px;
+            transition: 0.3s;
+        }
+        .toggle.active::after { left: 25px; }
+        
+        .status-msg {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+        .error { color: var(--danger); font-size: 13px; text-align: center; margin-top: 10px; display: none; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <h1><i class="fas fa-people-roof"></i> HorizenFamily</h1>
+    <p class="sub">Manage your family, set screen time limits, and keep your children safe online.</p>
+
+    <!-- Auth Check / Loader -->
+    <div id="auth-loader" class="status-msg">
+        Checking Horizen account...
+    </div>
+
+    <!-- No Family State -->
+    <div id="no-family-panel" style="display:none; width:100%; max-width:600px;">
+        <div class="panel">
+            <h2><i class="fas fa-plus-circle"></i> Create a Family</h2>
+            <div class="form-group">
+                <label>Family Name</label>
+                <input type="text" id="family-name-input" placeholder="e.g., The Smiths">
+            </div>
+            <button class="btn" onclick="createFamily()">Create Family</button>
+            <div class="error" id="create-family-error"></div>
+        </div>
+        <div class="panel">
+            <h2><i class="fas fa-link"></i> Join a Family</h2>
+            <div class="form-group">
+                <label>Invite Code</label>
+                <input type="text" id="invite-code-input" placeholder="Enter 6-digit code">
+            </div>
+            <button class="btn" onclick="joinFamily()">Join Family</button>
+            <div class="error" id="join-family-error"></div>
+        </div>
+    </div>
+
+    <!-- Family Dashboard -->
+    <div id="family-dashboard" style="display:none; width:100%; max-width:600px;">
+        
+        <!-- Members -->
+        <div class="panel">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="margin:0;"><i class="fas fa-users"></i> Members</h2>
+                <button class="btn btn-sm" onclick="showInviteModal()">Invite</button>
+            </div>
+            <div id="members-list"></div>
+        </div>
+
+        <!-- Parental Controls (Visible if parent) -->
+        <div class="panel" id="controls-panel" style="display:none;">
+            <h2><i class="fas fa-shield-halved"></i> Parental Controls</h2>
+            <div class="form-group">
+                <label>Select Child Account</label>
+                <select id="child-select" onchange="loadRestrictions()">
+                    <option value="">
