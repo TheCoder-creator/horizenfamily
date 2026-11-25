@@ -252,23 +252,9 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
       <h1>Horizen<span>Family</span></h1>
     </div>
     <div class="auth-sub">Parental controls & family safety for Horizon OS</div>
-    <div class="auth-tabs">
-      <button class="auth-tab active" onclick="switchAuthTab('login',this)">Sign In</button>
-      <button class="auth-tab" onclick="switchAuthTab('signup',this)">Create Account</button>
-    </div>
     <div id="auth-error" class="auth-error"></div>
-    <div id="login-form">
-      <div class="fg"><label>Username or Email</label><input type="text" id="login-id" placeholder="yourname or you@email.com"></div>
-      <div class="fg"><label>Password</label><input type="password" id="login-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
-      <button class="btn-primary" onclick="doLogin()">Sign In →</button>
-    </div>
-    <div id="signup-form" style="display:none">
-      <div class="fg"><label>Username</label><input type="text" id="signup-username" placeholder="yourname"></div>
-      <div class="fg"><label>Email</label><input type="email" id="signup-email" placeholder="you@email.com"></div>
-      <div class="fg"><label>Password</label><input type="password" id="signup-pass" placeholder="••••••••"></div>
-      <div class="fg"><label>Display Name</label><input type="text" id="signup-display" placeholder="Your Name"></div>
-      <button class="btn-primary" onclick="doSignup()">Create Account →</button>
-    </div>
+    <button class="btn-primary" id="messages-login-btn" onclick="signInWithMessages()">Continue with HorizenMessages →</button>
+    <div class="auth-sub" style="margin:18px 0 0;text-align:center">Use the same account you use for HorizenMessages.</div>
   </div>
 </div>
 
@@ -531,39 +517,165 @@ function showToast(msg){const e=document.getElementById('toast');e.textContent=m
 function timeAgo(ts){if(!ts)return'Never';const s=Math.floor((Date.now()-new Date(ts).getTime())/1000);if(s<60)return'Just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
 function fmtMins(m){if(!m||m===0)return'0m';if(m<60)return m+'m';return Math.floor(m/60)+'h '+(m%60)+'m';}
 
-/* ===== AUTH ===== */
-function switchAuthTab(tab,btn){document.querySelectorAll('.auth-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');document.getElementById('login-form').style.display=tab==='login'?'block':'none';document.getElementById('signup-form').style.display=tab==='signup'?'block':'none';document.getElementById('auth-error').style.display='none';}
-function showAuthErr(m){const e=document.getElementById('auth-error');e.textContent=m;e.style.display='block'}
-async function sha256(message){const msgBuffer=new TextEncoder().encode(message);const hashBuffer=await crypto.subtle.digest('SHA-256',msgBuffer);return Array.from(new Uint8Array(hashBuffer)).map(b=>b.toString(16).padStart(2,'0')).join('');}
+/* ===== HORIZENMESSAGES OAUTH LOGIN ===== */
+const MSG_AUTH_URL='https://wzfdomantqeaedfexpgq.supabase.co';
+const MSG_OAUTH_CLIENT_ID='1c07850f-28fa-4d37-9dec-1b0ecb186baf';
+const MSG_TOKEN_KEY='hz_oauth_tokens';
+const MSG_REDIRECT=location.origin+location.pathname;
+let msgOAuth=null;
 
-async function doLogin(){
-  const id=document.getElementById('login-id').value.trim();
-  const pass=document.getElementById('login-pass').value;
-  if(!id||!pass)return showAuthErr('Fill in all fields');
-  const hash=await sha256(pass);
-  const isEmail=id.includes('@');
-  let query=sb.from('horizen_accounts').select('*').eq('password_hash',hash);
-  if(isEmail)query=query.eq('email',id);else query=query.eq('username',id);
-  const{data,error}=await query.maybeSingle();
-  if(error||!data)return showAuthErr('Invalid username/email or password');
-  me=data;
-  localStorage.setItem('hf_account',JSON.stringify(data));
-  onAuth();
+function showAuthErr(message){
+  const e=document.getElementById('auth-error');
+  e.textContent=message;
+  e.style.display='block';
 }
 
-async function doSignup(){
-  const username=document.getElementById('signup-username').value.trim();
-  const email=document.getElementById('signup-email').value.trim();
-  const pass=document.getElementById('signup-pass').value;
-  const display=document.getElementById('signup-display').value.trim()||username;
-  if(!username||!email||!pass)return showAuthErr('Fill in all fields');
-  if(pass.length<6)return showAuthErr('Password must be at least 6 characters');
-  const hash=await sha256(pass);
-  const{data,error}=await sb.from('horizen_accounts').insert({username,email,password_hash:hash,display_name:display}).select().single();
-  if(error)return showAuthErr(error.message.includes('duplicate')?'Username or email already taken':error.message);
-  me=data;
-  localStorage.setItem('hf_account',JSON.stringify(data));
-  onAuth();
+function base64Url(bytes){
+  return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+function saveMessagesToken(token,user){
+  msgOAuth={
+    access:token.access_token,
+    refresh:token.refresh_token||(msgOAuth&&msgOAuth.refresh),
+    exp:Date.now()+(token.expires_in||3600)*1000,
+    user:user||(msgOAuth&&msgOAuth.user)
+  };
+  localStorage.setItem(MSG_TOKEN_KEY,JSON.stringify(msgOAuth));
+}
+
+function clearMessagesToken(){
+  msgOAuth=null;
+  localStorage.removeItem(MSG_TOKEN_KEY);
+}
+
+async function messagesAccessToken(){
+  if(!msgOAuth){
+    try{msgOAuth=JSON.parse(localStorage.getItem(MSG_TOKEN_KEY)||'null');}catch(e){msgOAuth=null;}
+  }
+  if(!msgOAuth)return null;
+  if(Date.now()>msgOAuth.exp-60000){
+    if(!msgOAuth.refresh)return null;
+    const response=await fetch(MSG_AUTH_URL+'/auth/v1/oauth/token',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({
+        grant_type:'refresh_token',
+        refresh_token:msgOAuth.refresh,
+        client_id:MSG_OAUTH_CLIENT_ID
+      })
+    });
+    const token=await response.json();
+    if(!response.ok||!token.access_token)return null;
+    saveMessagesToken(token);
+  }
+  return msgOAuth.access;
+}
+
+async function messagesUser(){
+  const access=await messagesAccessToken();
+  if(!access)return null;
+  const response=await fetch(MSG_AUTH_URL+'/auth/v1/oauth/userinfo',{
+    headers:{Authorization:'Bearer '+access}
+  });
+  if(!response.ok)return null;
+  const user=await response.json();
+  if(!user.email||user.email_verified===false)return null;
+  return user;
+}
+
+async function signInWithMessages(){
+  const button=document.getElementById('messages-login-btn');
+  button.disabled=true;
+  button.textContent='Connecting to HorizenMessages...';
+  document.getElementById('auth-error').style.display='none';
+  try{
+    const verifier=base64Url(crypto.getRandomValues(new Uint8Array(32)));
+    const state=base64Url(crypto.getRandomValues(new Uint8Array(16)));
+    const challenge=base64Url(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier)));
+    sessionStorage.setItem('hf_messages_oauth',JSON.stringify({verifier,state}));
+    const params=new URLSearchParams({
+      response_type:'code',
+      client_id:MSG_OAUTH_CLIENT_ID,
+      redirect_uri:MSG_REDIRECT,
+      scope:'email profile',
+      state,
+      code_challenge:challenge,
+      code_challenge_method:'S256'
+    });
+    location.href=MSG_AUTH_URL+'/auth/v1/oauth/authorize?'+params.toString();
+  }catch(error){
+    showAuthErr('Could not start HorizenMessages sign-in: '+error.message);
+    button.disabled=false;
+    button.textContent='Continue with HorizenMessages →';
+  }
+}
+
+async function finishMessagesSignIn(){
+  const query=new URLSearchParams(location.search);
+  if(!query.has('state')||(!query.has('code')&&!query.has('error')))return;
+  let saved=null;
+  try{saved=JSON.parse(sessionStorage.getItem('hf_messages_oauth')||'null');}catch(e){}
+  if(!saved||saved.state!==query.get('state'))return;
+  sessionStorage.removeItem('hf_messages_oauth');
+  history.replaceState(null,'',location.pathname);
+  if(query.get('error')){
+    showAuthErr(query.get('error_description')||'HorizenMessages sign-in was cancelled.');
+    return;
+  }
+  try{
+    const response=await fetch(MSG_AUTH_URL+'/auth/v1/oauth/token',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({
+        grant_type:'authorization_code',
+        code:query.get('code'),
+        client_id:MSG_OAUTH_CLIENT_ID,
+        redirect_uri:MSG_REDIRECT,
+        code_verifier:saved.verifier
+      })
+    });
+    const token=await response.json();
+    if(!response.ok||!token.access_token)throw new Error(token.error_description||token.msg||'Sign-in failed');
+    const userResponse=await fetch(MSG_AUTH_URL+'/auth/v1/oauth/userinfo',{
+      headers:{Authorization:'Bearer '+token.access_token}
+    });
+    const user=await userResponse.json();
+    if(!userResponse.ok||!user.email)throw new Error('HorizenMessages did not provide an email address.');
+    if(user.email_verified===false)throw new Error('Verify your HorizenMessages email before signing in.');
+    saveMessagesToken(token,{id:user.sub,email:user.email});
+    await loadFamilyAccount(user);
+  }catch(error){
+    showAuthErr(error.message||'HorizenMessages sign-in failed.');
+    const button=document.getElementById('messages-login-btn');
+    button.disabled=false;
+    button.textContent='Continue with HorizenMessages →';
+  }
+}
+
+async function loadFamilyAccount(user){
+  const email=String(user.email||'').trim().toLowerCase();
+  if(!email)throw new Error('Your HorizenMessages account has no email address.');
+  let {data:account,error}=await sb.from('horizen_accounts').select('*').ilike('email',email).maybeSingle();
+  if(error)throw new Error('Could not load your HorizenFamily account: '+error.message);
+  if(!account){
+    const base=(String(user.name||email.split('@')[0]).toLowerCase().replace(/[^a-z0-9_]/g,'').slice(0,24)||'horizenuser');
+    const random=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x=>x.toString(16).padStart(2,'0')).join('');
+    for(let attempt=0;attempt<4&&!account;attempt++){
+      const username=attempt===0?base:base+Math.floor(1000+Math.random()*9000);
+      const result=await sb.from('horizen_accounts').insert({
+        username,
+        email,
+        password_hash:'messages:'+random,
+        display_name:user.name||base
+      }).select().single();
+      if(!result.error)account=result.data;
+      else if(!String(result.error.message||'').toLowerCase().includes('duplicate'))throw new Error(result.error.message);
+    }
+  }
+  if(!account)throw new Error('Could not create your HorizenFamily profile. Please contact support.');
+  me=account;
+  await onAuth();
 }
 
 async function onAuth(){
@@ -1120,6 +1232,7 @@ function showPage(name){
 /* ===== LOGOUT ===== */
 function showLogoutMenu(){
   if(confirm('Sign out of HorizenFamily?')){
+    clearMessagesToken();
     localStorage.removeItem('hf_account');
     location.reload();
   }
@@ -1127,14 +1240,14 @@ function showLogoutMenu(){
 
 /* ===== INIT ===== */
 window.onload=async()=>{
-  const saved=localStorage.getItem('hf_account');
-  if(saved){
-    try{
-      const acc=JSON.parse(saved);
-      // Re-verify with DB
-      const{data}=await sb.from('horizen_accounts').select('*').eq('id',acc.id).maybeSingle();
-      if(data){me=data;localStorage.setItem('hf_account',JSON.stringify(data));onAuth();return;}
-    }catch(e){}
+  await finishMessagesSignIn();
+  if(me)return;
+  try{
+    const user=await messagesUser();
+    if(user)await loadFamilyAccount(user);
+    else if(localStorage.getItem(MSG_TOKEN_KEY))clearMessagesToken();
+  }catch(error){
+    showAuthErr(error.message||'Could not verify your HorizenMessages session.');
   }
 };
 
