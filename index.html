@@ -1282,6 +1282,19 @@ document.addEventListener('click',function(e){
 });
 
 document.getElementById('connect-modal').addEventListener('click',function(e){if(e.target===this)closeConnectModal();});
+
+const familyOriginalOnload=window.onload;
+window.onload=async function(event){
+  if(typeof familyOriginalOnload==='function')await familyOriginalOnload.call(this,event);
+  if(!me)return;
+  const params=new URLSearchParams(location.search);
+  const page=params.get('page');
+  if(['overview','members','controls','activity','location'].includes(page))showPage(page);
+  const action=params.get('action');
+  if(action==='add-member')setTimeout(openConnectModal,250);
+  if(action==='notifications')setTimeout(toggleNotifPanel,150);
+  if(action==='refresh-location')setTimeout(refreshLocationView,150);
+};
 </script>
 </body>
 </html>
